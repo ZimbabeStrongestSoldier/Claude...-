@@ -25,7 +25,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v8.10"
+GUI.Version = "v8.11"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -12095,6 +12095,19 @@ end)()
                 end)
                 pcall(function() rows[i].item.noSave = true end)
             end
+            -- "Move Colour" picks which stop Move Up / Move Down shifts; it follows the colour as it
+            -- moves, and its list keeps up with Add / Remove / Reverse / presets.
+            local sel, selDD = 1, nil
+            local function selNames()
+                local n = {}
+                for i = 1, #stops() do n[i] = "Colour " .. i end
+                return n
+            end
+            local function syncSel()
+                if sel > #stops() then sel = #stops() end
+                pcall(function() selDD:UpdateChoices(selNames()) end)
+                pcall(function() selDD:Set("Colour " .. sel) end)
+            end
             -- set every visible row from the stops without each Set echoing back as an edit
             local function syncRows()
                 applying = true
@@ -12102,7 +12115,27 @@ end)()
                 applying = false
                 refresh()
                 changed()
+                syncSel()
             end
+            selDD = sec:Dropdown("Move Colour", "Colour 1", selNames(), false, function(v)
+                local n = tonumber(tostring(ddVal(v) or ""):match("%d+"))
+                if n and n >= 1 and n <= #stops() then sel = n end
+            end)
+            pcall(function() selDD.item.noSave = true end)
+            ctl[#ctl + 1] = selDD
+            local function move(dir)
+                local s = stops()
+                local j = sel + dir
+                if j < 1 or j > #s then
+                    pcall(uiNotify, title, dir < 0 and "Colour " .. sel .. " is already first" or "Colour " .. sel .. " is already last", 2)
+                    return
+                end
+                s[sel], s[j] = s[j], s[sel]
+                sel = j
+                syncRows()
+            end
+            ctl[#ctl + 1] = sec:Button("Move Up", function() move(-1) end)
+            ctl[#ctl + 1] = sec:Button("Move Down", function() move(1) end)
             local dd = sec:Dropdown("Preset", "", presetNames(), false, function(v)
                 local p = findPreset(ddVal(v))
                 if not p then return end
