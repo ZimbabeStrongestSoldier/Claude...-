@@ -4550,9 +4550,11 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
 				end
 			end
 		end
-		eM = rqPageBar(di, eM, hf, h3, iB, hy)
-		iB = iB + RQ_PAGE_H + RQ_PAGE_GAP
-		iC = iC - RQ_PAGE_H - RQ_PAGE_GAP
+		if not (az._rqHdrPages and di == az.activeTab) then
+			eM = rqPageBar(di, eM, hf, h3, iB, hy)
+			iB = iB + RQ_PAGE_H + RQ_PAGE_GAP
+			iC = iC - RQ_PAGE_H - RQ_PAGE_GAP
+		end
 		local key = tostring(di.activePage) .. "#" .. #di.sections
 		if di._psKey ~= key then
 			local list = {}
@@ -5322,6 +5324,45 @@ local function jg(eM, fl, eN)
 		if az.activeTab then
 			bN(az.activeTab.name, bW + 16, bM(b8 + gw, kh, 14), ak, 14, aq, 13, false, false, eo - 32, an.label * g)
 		end
+		-- RQ patch #14: the active tab's pages, in this header row after its title
+		az._rqHdrPages = false
+		local rqT = az.activeTab
+		if rqT and rqT.pages and #rqT.pages > 1 then
+			az._rqHdrPages = true
+			local rqF = bA(aq)
+			local rqHf = az.dropdown ~= nil or az.colorpicker ~= nil or az.keyMenu ~= nil or az.dialog ~= nil
+			local rqAcc = az._accentMid
+			local rqH = 26
+			local rqY = b8 + gw + (kh - rqH) / 2
+			local rqX = bW + 16 + bC(rqT.name, 14, rqF) + 16
+			local rqEnd = b7 + b9 - 16
+			bj(rqX - 8, rqY + 6, rqX - 8, rqY + rqH - 6, ak, 13, 1, an.hairline * g)
+			rqT._pageAf = rqT._pageAf or {}
+			for _, p in ipairs(rqT.pages) do
+				local w = bC(p, 13, rqF) + 24
+				if rqX + w > rqEnd then break end
+				local dW = rqT.activePage == p
+				local jU = not rqHf and cA(rqX, rqY, w, rqH)
+				local fM = jU and az.hoverEffects ~= false
+				local jV = bX(rqT._pageAf[p] or 0, dW and 1 or 0, 13)
+				rqT._pageAf[p] = jV
+				b6(rqX, rqY, w, rqH, ak, 13, 7, an.tabFill * jV * g)
+				bi(rqX, rqY, w, rqH, ak, 14, 7, an.cardStrk * jV * g)
+				b6(rqX + w / 2 - 8 * jV, rqY + rqH - 3, D(1, 16 * jV), 2, rqAcc, 15, 1, 0.95 * jV * g)
+				b6(rqX, rqY, w, rqH, ak, 13, 7, (fM and not dW and 0.07 or 0) * g)
+				local hu = (dW and an.hover or (fM and an.label or an.dim)) * g
+				bN(p, rqX + w / 2, bM(rqY, rqH, 13), dW and rqAcc or ak, 13, aq, 15, true, false, nil, hu)
+				if eM and jU then
+					if rqT.activePage ~= p then
+						rqT.activePage = p
+						rqT.scrollY, rqT.targetScrollY = 0, 0
+						az.contentFade = 0
+					end
+					eM = false
+				end
+				rqX = rqX + w + 6
+			end
+		end
 		local ki = cb(al.accentA, al.accentB)
 		bj(bW, b8 + gw + kh, b7 + b9, b8 + gw + kh, ki, 11, 3, 0.12 * g)
 		bj(bW, b8 + gw + kh, b7 + b9, b8 + gw + kh, ki, 12, 1, 0.5 * g)
@@ -5329,6 +5370,7 @@ local function jg(eM, fl, eN)
 		h3 = bW + 12
 		hy = eo - 24 - 6
 	else
+		az._rqHdrPages = false
 		bW = b7
 		eo = b9
 		iB = b8 + gw + jq + 8
