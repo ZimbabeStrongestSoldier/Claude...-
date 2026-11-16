@@ -35,7 +35,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v9.61"
+GUI.Version = "v9.62"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -13251,6 +13251,18 @@ end)()
                     local t = fresh[e.key]; t[#t + 1] = e
                 end
             end
+            -- v9.60: keep what this scan found like Load Values does, so the per-server disk cache
+            -- (RQ/RQCharCache.json) remembers it and a Matcha restart doesn't scan again
+            local added = false
+            for _, k in ipairs(BB_SCAN) do
+                local cfg = CFG[k]
+                if cfg and #(cache[k] or {}) == 0 then
+                    local good = {}
+                    for _, e in ipairs(fresh[k]) do if keep(cfg, e) then good[#good + 1] = e end end
+                    if #good > 0 then cache[k] = good; added = true end
+                end
+            end
+            if added then pcall(saveCache) end
             return fresh
         end
 
@@ -13336,10 +13348,10 @@ end)()
             if not (cfg and cur >= cfg.lo and cur <= cfg.hi) then
                 return false, "slot moved (" .. tostring(cur) .. ") - rejoin"
             end
-            pcall(function() applygc({ e }, e.key, value) end)
-            local ok2, now = pcall(memory_read, "double", a)
-            now = ok2 and bbNum(now) or nil
-            if not bbNear(now, value) then return false, "write rejected" end
+            if savedDefault[e.key] == nil then savedDefault[e.key] = cur; pcall(saveState) end
+            -- landWrite = applygc, read back, and a checked direct write if applygc didn't take
+            -- (records restored from the disk cache may not be ones applygc accepts)
+            if not landWrite(e.key, e, value) then return false, "write rejected" end
             bbLive[slot] = value
             return true
         end
