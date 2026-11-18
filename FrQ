@@ -35,7 +35,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v9.61"
+GUI.Version = "v9.62"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -13562,8 +13562,24 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
         -- (Matcha's raycast is partial), so the arc doesn't stop at walls; it runs 1.5 s (~2400 studs).
         -- Cost: only while the toggle is on, right mouse is held and a Musket is out: ~90 points and
         -- ~45 lines per frame at 60 fps; otherwise one cheap check every 0.2 s. No getgc ever.
-        local MT = { on = false, speed = 1600, dropoff = 350, g = 196.2 * 2, maxT = 1.5, step = 1 / 60,
-            segs = 45, ms = 1, md = 1 }
+        local MT = { on = false, maxT = 1.5, step = 1 / 60, segs = 45, ms = 1, md = 1 }
+        -- v9.62: every gun, read live from Common.Types.Projectiles.PROJECTILE_TYPES (speed / dropoff /
+        -- gravity Y). The equipped gun is a Model under your character named after it (the game finds
+        -- its muzzle the same way); a Dual Flintlock fires Flintlock rounds.
+        local MT_GUNS = {
+            ["Musket"]         = { speed = 1600,  dropoff = 350,  g = 392.4  },
+            ["Flintlock"]      = { speed = 1100,  dropoff = 100,  g = 588.6  },
+            ["Dual Flintlock"] = { speed = 1100,  dropoff = 100,  g = 588.6  },
+            ["Carbine"]        = { speed = 1500,  dropoff = 300,  g = 431.64 },
+            ["Long Rifle"]     = { speed = 1800,  dropoff = 500,  g = 313.92 },
+            ["Kar98k"]         = { speed = 3000,  dropoff = 2500, g = 313.92 },
+            ["M1911"]          = { speed = 1800,  dropoff = 600,  g = 392.4  },
+            ["MP41"]           = { speed = 3500,  dropoff = 1000, g = 490.5  },
+            ["Shotgun"]        = { speed = 2300,  dropoff = 300,  g = 588.6  },
+            ["BlunderBuss"]    = { speed = 1800,  dropoff = 500,  g = 392.4  },
+            ["LMG"]            = { speed = 16000, dropoff = 3000, g = 313.92 },
+            ["Personnel"]      = { speed = 5200,  dropoff = 280,  g = 1177.2 },
+        }
         local mtLines = {}
         for i = 1, MT.segs do
             local ln = Drawing.new("Line")
@@ -13588,28 +13604,50 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
             end
             return 1
         end
-        local mtExit = { key = nil, exit = nil }
-        local function mtMuzzle(ch)
-            local m = ch:FindFirstChild("Musket")
-            if not m then mtExit.key, mtExit.exit = nil, nil; return nil end
+        local mtExit = { key = nil, exit = nil, body = nil }
+        local mtDbg = {}
+        _G.RQTraj = mtDbg
+        -- the equipped gun (model, physics) and its muzzle position
+        local function mtGun(ch)
+            for _, c in ipairs(ch:GetChildren()) do
+                local phys = MT_GUNS[c.Name]
+                if phys then return c, phys end
+            end
+            return nil, nil
+        end
+        local function mtMuzzle(m)
             local key = tostring(m.Address)
-            if mtExit.key ~= key then mtExit.key, mtExit.exit = key, m:FindFirstChild("Exit", true) end
-            local ex = mtExit.exit
-            if not ex then return nil end
+            if mtExit.key ~= key then
+                mtExit.key = key
+                mtExit.exit = m:FindFirstChild("Exit", true)
+                mtExit.body = m:FindFirstChild("Handle", true) or m:FindFirstChildWhichIsA("BasePart", true)
+            end
             local p = nil
-            pcall(function() p = ex.WorldPosition end)
-            if not (p and p.X) then pcall(function() p = ex.Parent.Position end) end
+            local ex = mtExit.exit
+            if ex then
+                pcall(function() p = ex.WorldPosition end)
+                if not (p and p.X) then pcall(function() p = ex.Parent.Position end) end
+            end
+            if not (p and p.X) and mtExit.body then pcall(function() p = mtExit.body.Position end) end
+            mtDbg.exit = ex and ex.ClassName or "none"
             if p and p.X then return p end
             return nil
         end
         local function mtFrame()
-            if not ismouse2pressed() then return false end
+            local aiming = ismouse2pressed() == true
+            mtDbg.aiming = aiming
             local ch = LocalPlayer.Character
-            local muzzle = ch and mtMuzzle(ch)
+            local gun, phys = nil, nil
+            if ch then gun, phys = mtGun(ch) end
+            mtDbg.gun = gun and gun.Name or "none"
+            if not (aiming and gun) then return false end
+            local muzzle = mtMuzzle(gun)
+            mtDbg.muzzle = muzzle and string.format("%.0f,%.0f,%.0f", muzzle.X, muzzle.Y, muzzle.Z) or "none"
             if not muzzle then return false end
             local cf = Workspace.CurrentCamera.CFrame
             local dir = ((cf.Position + cf.LookVector * 1500) - muzzle).Unit
-            local speed, dropoff = MT.speed * MT.ms, MT.dropoff * MT.md
+            local speed, dropoff = phys.speed * MT.ms, phys.dropoff * MT.md
+            local grav = phys.g
             local tStraight = dropoff / speed
             local total = math.floor(MT.maxT / MT.step)
             local every = math.max(1, math.floor(total / MT.segs))
@@ -13621,7 +13659,7 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
                     p = muzzle + dir * (speed * t)
                 else
                     local t2 = t - tStraight
-                    p = muzzle + dir * dropoff + dir * (speed * t2) + Vector3.new(0, -MT.g * 0.5 * t2 * t2, 0)
+                    p = muzzle + dir * dropoff + dir * (speed * t2) + Vector3.new(0, -grav * 0.5 * t2 * t2, 0)
                 end
                 local s, on = WorldToScreen(p)
                 if prevS and s and on and prevOn and seg < MT.segs then
@@ -13638,6 +13676,7 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
             else
                 mtDot.Visible = false
             end
+            mtDbg.segments = seg
             return seg > 0
         end
         task.spawn(function()
@@ -13660,11 +13699,11 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
             for _, ln in ipairs(mtLines) do pcall(function() ln:Remove() end) end
             pcall(function() mtDot:Remove() end)
         end)
-        local secMT = tab:Section("Musket Trajectory", "Left", "Aim arc overlay (client only)")
+        local secMT = tab:Section("Gun Trajectory", "Left", "Aim arc overlay (client only)")
         secMT:Toggle("Show Trajectory", false, function(v)
             MT.on = v == true
             if not MT.on then pcall(mtHide) end
-        end):Tooltip("While you aim a Musket (right mouse), draws where the bullet will fly, like the trajectory talent. Pure overlay: nothing in the game is changed, so nothing can be validated.")
+        end):Tooltip("While you aim a gun (right mouse), draws where the bullet will fly, like the musket trajectory talent - any firearm, with its own speed and drop. Pure overlay: nothing in the game is changed, so nothing can be validated.")
 
         -- ---------- Thunderspears ----------
         -- The spear's whole accuracy model is two numbers. It picks an aim point
