@@ -35,7 +35,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v9.62"
+GUI.Version = "v9.63"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -13557,9 +13557,11 @@ end)()
         -- it continue the left column instead. On the upstream fallback lib it just sits lower.
         -- Load Values (the lock popup) also loads the gas bar; a respawn rebuilds the gear table, and
         -- this re-finds it (gas keys only).
-        local secGas = tab:Section("Gas Bar", "Left", "after a respawn")
+        -- v9.63: one button, so no section header (no title, no collapse arrow): the library draws an
+        -- unnamed section as a plain card. Paged / placed by its empty name below.
+        local secGas = tab:Section("", "Left")
         pcall(function() secGas._section.stack = true end)
-        secGas:Button("Reload Gas  (~10s)", function()
+        secGas:Button("Reload Gas Bar  (~10s)", function()
             if GUI.CharReloadGas then GUI.CharReloadGas() end
         end)
     end)
@@ -14398,9 +14400,9 @@ end)()
         })
         -- Gas Bar (a one-button section that continues its column) fills the gap under Grapple.
         -- Moved before paginate, so the page lists are built from the final order.
-        moveAfter(GUI._charTab, "Gas Bar", "Grapple")
+        moveAfter(GUI._charTab, "", "Grapple")   -- the unnamed Reload Gas Bar card
         paginate(GUI._charTab, {
-            { "Movement", { "Grapple", "Velocity", "Dash", "Parry", "Sprint", "Gas Bar" }, icon = "dash" },
+            { "Movement", { "Grapple", "Velocity", "Dash", "Parry", "Sprint", "" }, icon = "dash" },
             { "Weapons", icon = "swords" },      -- Firearm Auto, Thunderspears
         })
         paginate(GUI._setTab, {
