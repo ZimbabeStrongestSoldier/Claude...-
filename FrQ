@@ -35,7 +35,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v9.63"
+GUI.Version = "v9.64"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -13618,9 +13618,18 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
         local function mtMuzzle(m)
             local key = tostring(m.Address)
             if mtExit.key ~= key then
-                mtExit.key = key
-                mtExit.exit = m:FindFirstChild("Exit", true)
-                mtExit.body = m:FindFirstChild("Handle", true) or m:FindFirstChildWhichIsA("BasePart", true)
+                -- v9.64: walk the descendants by hand. Matcha's FindFirstChild ignores the recursive flag,
+                -- so FindFirstChild("Exit", true) never found the Flintlock's Exit (it sits inside the
+                -- "Metal" part) and the arc started from a fallback part. Once per gun model, cached.
+                mtExit.key, mtExit.exit, mtExit.body = key, nil, nil
+                for _, d in ipairs(m:GetDescendants()) do
+                    local nm = string.lower(d.Name)
+                    if not mtExit.exit and nm == "exit" then mtExit.exit = d end
+                    if not mtExit.body and (nm == "handle" or d.ClassName == "Part" or d.ClassName == "MeshPart") then
+                        mtExit.body = d
+                    end
+                    if mtExit.exit then break end
+                end
             end
             local p = nil
             local ex = mtExit.exit
