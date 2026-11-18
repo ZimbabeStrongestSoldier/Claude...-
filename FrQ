@@ -35,7 +35,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v9.60"
+GUI.Version = "v9.61"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -12533,6 +12533,11 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
             pelletSpreadOffset                  = { lo = 0, hi = 40,     fb = 835/100 },
             pelletCount                         = { lo = 2, hi = 40,     fb = 10  },
             spreadReferenceDistance             = { lo = 10, hi = 500,   fb = 45  },
+            -- Musket Trajectory overlay (v9.61): READ ONLY, never written. Your attribute mirror values,
+            -- swept with Load Values so the overlay scales speed/dropoff like the game (lookup-hash
+            -- integers under the same names are outside lo..hi and dropped).
+            FirearmProjectileSpeedMultiplier    = { lo = 0.1, hi = 10,   fb = 1   },
+            FirearmProjectileDropoffMultiplier  = { lo = 0.1, hi = 10,   fb = 1   },
             -- Spyglass (Client.User.Equipment.Tools.Exploration.Spyglass). Live getgc 2026-10-21:
             -- exactly TWO numeric entries per key (the config is loaded twice), both 200; every
             -- other entry under these names is a string or a function, excluded by type. lo=0 so
@@ -13543,6 +13548,123 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
                 notif("Weapons", "Restored stock spread, recoil and pellet cone", 3)
             end)
         end)
+
+        -- ---------- Musket Trajectory (overlay only) ----------
+        -- Draws the musket's bullet arc while you aim it - what the CanSeeMusketTrajectory talent shows -
+        -- as FrQ's own Drawing lines. Nothing in the game is written: no attribute, no config, no remote,
+        -- so there is nothing for the client or the server to validate. Only reads: your character's
+        -- Musket model, the camera, and (if Load Values cached them) your two projectile multipliers.
+        -- Physics = Common.Types.Projectiles, read live 2026-11-18: Musket speed 1600, dropoff 350,
+        -- gravity 2 x workspace (196.2) = 392.4 down. getFirearmProjectileState: straight for `dropoff`
+        -- studs, then p = muzzle + dir*dropoff + dir*speed*t + gravity*t^2/2. Speed and dropoff are scaled
+        -- by FirearmProjectileSpeedMultiplier / FirearmProjectileDropoffMultiplier (both 1 when measured).
+        -- Aim = the camera's look direction (the mouse is locked while aiming). No collision test
+        -- (Matcha's raycast is partial), so the arc doesn't stop at walls; it runs 1.5 s (~2400 studs).
+        -- Cost: only while the toggle is on, right mouse is held and a Musket is out: ~90 points and
+        -- ~45 lines per frame at 60 fps; otherwise one cheap check every 0.2 s. No getgc ever.
+        local MT = { on = false, speed = 1600, dropoff = 350, g = 196.2 * 2, maxT = 1.5, step = 1 / 60,
+            segs = 45, ms = 1, md = 1 }
+        local mtLines = {}
+        for i = 1, MT.segs do
+            local ln = Drawing.new("Line")
+            ln.Color, ln.Thickness, ln.Transparency, ln.ZIndex, ln.Visible = Color3.fromRGB(255, 205, 90), 2, 0.9, 40, false
+            mtLines[i] = ln
+        end
+        local mtDot = Drawing.new("Circle")
+        mtDot.Color, mtDot.Radius, mtDot.Filled, mtDot.NumSides, mtDot.ZIndex, mtDot.Visible =
+            Color3.fromRGB(255, 120, 60), 4, true, 12, 41, false
+        local function mtHide()
+            for _, ln in ipairs(mtLines) do ln.Visible = false end
+            mtDot.Visible = false
+        end
+        -- a multiplier from the Load Values cache (live read at its address), else 1
+        local function mtMult(key)
+            local e = cachedFor(key)[1]
+            local a = e and gcAddr(e)
+            if a and type(memory_read) == "function" then
+                local ok, v = pcall(memory_read, "double", a)
+                v = ok and gcNum(v) or nil
+                if v and v > 0.1 and v < 10 then return v end
+            end
+            return 1
+        end
+        local mtExit = { key = nil, exit = nil }
+        local function mtMuzzle(ch)
+            local m = ch:FindFirstChild("Musket")
+            if not m then mtExit.key, mtExit.exit = nil, nil; return nil end
+            local key = tostring(m.Address)
+            if mtExit.key ~= key then mtExit.key, mtExit.exit = key, m:FindFirstChild("Exit", true) end
+            local ex = mtExit.exit
+            if not ex then return nil end
+            local p = nil
+            pcall(function() p = ex.WorldPosition end)
+            if not (p and p.X) then pcall(function() p = ex.Parent.Position end) end
+            if p and p.X then return p end
+            return nil
+        end
+        local function mtFrame()
+            if not ismouse2pressed() then return false end
+            local ch = LocalPlayer.Character
+            local muzzle = ch and mtMuzzle(ch)
+            if not muzzle then return false end
+            local cf = Workspace.CurrentCamera.CFrame
+            local dir = ((cf.Position + cf.LookVector * 1500) - muzzle).Unit
+            local speed, dropoff = MT.speed * MT.ms, MT.dropoff * MT.md
+            local tStraight = dropoff / speed
+            local total = math.floor(MT.maxT / MT.step)
+            local every = math.max(1, math.floor(total / MT.segs))
+            local seg, prevS, prevOn, last = 0, nil, false, nil
+            for i = 0, total, every do
+                local t = i * MT.step
+                local p
+                if t < tStraight then
+                    p = muzzle + dir * (speed * t)
+                else
+                    local t2 = t - tStraight
+                    p = muzzle + dir * dropoff + dir * (speed * t2) + Vector3.new(0, -MT.g * 0.5 * t2 * t2, 0)
+                end
+                local s, on = WorldToScreen(p)
+                if prevS and s and on and prevOn and seg < MT.segs then
+                    seg = seg + 1
+                    local ln = mtLines[seg]
+                    ln.From, ln.To, ln.Visible = Vector2.new(prevS.X, prevS.Y), Vector2.new(s.X, s.Y), true
+                    last = s
+                end
+                prevS, prevOn = s, on
+            end
+            for k = seg + 1, MT.segs do mtLines[k].Visible = false end
+            if last then
+                mtDot.Position, mtDot.Visible = Vector2.new(last.X, last.Y), true
+            else
+                mtDot.Visible = false
+            end
+            return seg > 0
+        end
+        task.spawn(function()
+            local multAt = 0
+            while GUI.Running do
+                if MT.on then
+                    if os.clock() - multAt > 5 then
+                        multAt = os.clock()
+                        MT.ms = mtMult("FirearmProjectileSpeedMultiplier")
+                        MT.md = mtMult("FirearmProjectileDropoffMultiplier")
+                    end
+                    local ok, drew = pcall(mtFrame)
+                    if not (ok and drew) then mtHide() end
+                    task.wait(1 / 60)
+                else
+                    task.wait(0.2)
+                end
+            end
+            mtHide()
+            for _, ln in ipairs(mtLines) do pcall(function() ln:Remove() end) end
+            pcall(function() mtDot:Remove() end)
+        end)
+        local secMT = tab:Section("Musket Trajectory", "Left", "Aim arc overlay (client only)")
+        secMT:Toggle("Show Trajectory", false, function(v)
+            MT.on = v == true
+            if not MT.on then pcall(mtHide) end
+        end):Tooltip("While you aim a Musket (right mouse), draws where the bullet will fly, like the trajectory talent. Pure overlay: nothing in the game is changed, so nothing can be validated.")
 
         -- ---------- Thunderspears ----------
         -- The spear's whole accuracy model is two numbers. It picks an aim point
