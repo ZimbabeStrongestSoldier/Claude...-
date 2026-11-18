@@ -35,7 +35,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v9.62"
+GUI.Version = "v9.63"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -13633,6 +13633,43 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
             if p and p.X then return p end
             return nil
         end
+        -- Where you're aiming: the game aims at mouse.Hit (the world point under your CURSOR), not the
+        -- screen centre (v9.62 used the camera's look direction: wrong whenever the cursor isn't centred).
+        -- 1) mouse.Hit.Position when Matcha exposes it - exactly the game's aim point;
+        -- 2) else a ray through the cursor, calibrated with two WorldToScreen projections (so FOV, screen
+        --    size and the top-bar inset need not be read), 1500 studs out;
+        -- 3) else the camera's look direction.
+        local mtMouse = nil
+        pcall(function() mtMouse = LocalPlayer:GetMouse() end)
+        local function mtAimPoint(cf)
+            local o, look = cf.Position, cf.LookVector
+            if mtMouse then
+                local hp = nil
+                pcall(function() hp = mtMouse.Hit.Position end)
+                if hp and hp.X and (hp - o).Magnitude > 1 then mtDbg.aimBy = "mouse.Hit"; return hp end
+                local ok, mx, my = pcall(function() return mtMouse.X, mtMouse.Y end)
+                if ok and type(mx) == "number" and type(my) == "number" then
+                    local right, up = nil, nil
+                    pcall(function() right, up = cf.RightVector, cf.UpVector end)
+                    if not (right and right.X and up and up.X) then
+                        right = look:Cross(Vector3.new(0, 1, 0)).Unit
+                        up = right:Cross(look).Unit
+                    end
+                    local base = o + look * 100
+                    local c = WorldToScreen(base)
+                    local r = WorldToScreen(base + right * 10)
+                    local u = WorldToScreen(base + up * 10)
+                    if c and r and u and math.abs(r.X - c.X) > 0.5 and math.abs(u.Y - c.Y) > 0.5 then
+                        local a = (mx - c.X) / (r.X - c.X) * 0.1
+                        local b = (my - c.Y) / (u.Y - c.Y) * 0.1
+                        mtDbg.aimBy = "cursor ray"
+                        return o + (look + right * a + up * b).Unit * 1500
+                    end
+                end
+            end
+            mtDbg.aimBy = "camera centre"
+            return o + look * 1500
+        end
         local function mtFrame()
             local aiming = ismouse2pressed() == true
             mtDbg.aiming = aiming
@@ -13645,7 +13682,7 @@ local function iA(di, eM, fl, eN, h3, iB, hy, iC)
             mtDbg.muzzle = muzzle and string.format("%.0f,%.0f,%.0f", muzzle.X, muzzle.Y, muzzle.Z) or "none"
             if not muzzle then return false end
             local cf = Workspace.CurrentCamera.CFrame
-            local dir = ((cf.Position + cf.LookVector * 1500) - muzzle).Unit
+            local dir = (mtAimPoint(cf) - muzzle).Unit
             local speed, dropoff = phys.speed * MT.ms, phys.dropoff * MT.md
             local grav = phys.g
             local tStraight = dropoff / speed
