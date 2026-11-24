@@ -35,7 +35,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v9.80"
+GUI.Version = "v9.81"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -1707,8 +1707,43 @@ local function espRegisterObj(obj)
     }
 end
 
-local function espScan()
-    for _, obj in pairs(Workspace:GetChildren()) do
+-- v9.81 Workspace lookups, shared. Workspace is thousands of children on some maps and every
+-- top-level lookup walks all of them (measured on the landmine map: FindFirstChild("Animals")
+-- ~406 ms, FindFirstChild("Titans") ~295 ms). On GUI: the main chunk is near the 200-local limit.
+-- GUI.WsFolder(name): a Workspace folder, remembered until it leaves the game; a missing one is
+-- looked for again at most every 15 s.
+GUI._wsFolders = {}
+GUI.WsFolder = function(name)
+    local e = GUI._wsFolders[name]
+    if not e then e = { at = -1e9 }; GUI._wsFolders[name] = e end
+    local f = e.f
+    if f then
+        local par
+        pcall(function() par = f.Parent end)
+        if par ~= nil then return f end
+        e.f, f = nil, nil
+    end
+    local now = os.clock()
+    if now - e.at < 15 then return nil end
+    e.at = now
+    pcall(function() f = Workspace:FindFirstChild(name) end)
+    e.f = f
+    return f
+end
+-- GUI.WsKids(maxAge): one Workspace:GetChildren() list, reused by anything that asks within
+-- maxAge seconds of it (the ESP scans in one tick, the death log, Actor ESP's world sweep).
+GUI.WsKids = function(maxAge)
+    local now = os.clock()
+    if GUI._wsKids and now - GUI._wsKidsAt <= (maxAge or 0) then return GUI._wsKids end
+    local kids
+    pcall(function() kids = Workspace:GetChildren() end)
+    if type(kids) ~= "table" then return {} end
+    GUI._wsKids, GUI._wsKidsAt = kids, now
+    return kids
+end
+
+local function espScan(kids)
+    for _, obj in pairs(kids or GUI.WsKids(0)) do
         espRegisterObj(obj)
     end
 end
@@ -1830,8 +1865,8 @@ local function marcsRegisterObj(obj)
     end
 end
 
-local function marcsScan()
-    for _, obj in pairs(Workspace:GetChildren()) do
+local function marcsScan(kids)
+    for _, obj in pairs(kids or GUI.WsKids(0)) do
         marcsRegisterObj(obj)
     end
 end
@@ -1977,8 +2012,8 @@ local function gearRegisterObj(obj)
     }
 end
 
-local function gearScan()
-    for _, obj in pairs(Workspace:GetChildren()) do
+local function gearScan(kids)
+    for _, obj in pairs(kids or GUI.WsKids(0)) do
         gearRegisterObj(obj)
     end
 end
@@ -2095,8 +2130,8 @@ local function resupplyRegisterObj(obj)
     }
 end
 
-local function resupplyScan()
-    for _, obj in pairs(Workspace:GetChildren()) do
+local function resupplyScan(kids)
+    for _, obj in pairs(kids or GUI.WsKids(0)) do
         resupplyRegisterObj(obj)
     end
 end
@@ -2455,7 +2490,7 @@ local function titanRegisterObj(titanModel)
 end
 
 local function titanScan()
-    local titansFolder = Workspace:FindFirstChild("Titans")
+    local titansFolder = GUI.WsFolder("Titans")
     if not titansFolder then return end
     for _, titanModel in ipairs(titansFolder:GetChildren()) do
         titanRegisterObj(titanModel)
@@ -2746,7 +2781,7 @@ end
 local function liveTitans()
     local list = {}
     pcall(function()
-        local f = Workspace:FindFirstChild("Titans")
+        local f = GUI.WsFolder("Titans")
         if f then list = f:GetChildren() end
     end)
     return list
@@ -3045,7 +3080,7 @@ local function animalRegisterObj(animalModel)
 end
 
 local function animalScan()
-    local animalsFolder = Workspace:FindFirstChild("Animals")
+    local animalsFolder = GUI.WsFolder("Animals")
     if not animalsFolder then return end
     for _, animalModel in ipairs(animalsFolder:GetChildren()) do
         animalRegisterObj(animalModel)
@@ -4316,8 +4351,25 @@ end
 -- worn: every step is nil-guarded and the bar says "(no pack)". Everything on GUI: the main chunk
 -- is near Lua's 200-local limit.
 do
+    -- v9.81: through LocalPlayer.Character (a few dozen children) instead of
+    -- Workspace:FindFirstChild(<you>), which walks every Workspace child (~390 ms on the landmine
+    -- map) and ran every 0.25 s while the bar was up. Only if Character isn't set is the Workspace
+    -- model looked up, remembered, and looked up again at most every 3 s.
+    local wsChar, wsCharAt = nil, -1e9
     local function readGaspack()
-        local ch = Workspace:FindFirstChild(LocalPlayer.Name)
+        local ch = LocalPlayer.Character
+        if not ch then
+            if wsChar then
+                local par
+                pcall(function() par = wsChar.Parent end)
+                if par == nil then wsChar = nil end
+            end
+            if not wsChar and os.clock() - wsCharAt >= 3 then
+                wsCharAt = os.clock()
+                pcall(function() wsChar = Workspace:FindFirstChild(LocalPlayer.Name) end)
+            end
+            ch = wsChar
+        end
         local att = ch and ch:FindFirstChild("attachment_Gaspack")
         local pack = att and att:FindFirstChild("Gaspack")
         local inter = pack and pack:FindFirstChild("Interaction")
@@ -5791,7 +5843,7 @@ local function deathLogUpdate()
     -- workspaces.
     local liveByName
     pcall(function()
-        local kids = Workspace:GetChildren()
+        local kids = GUI.WsKids(1)
         if not kids then return end
         local n = #kids
         local lbn = {}
@@ -6602,7 +6654,7 @@ end)()  -- /Music
     local function worldStep(now, deadline)
         if not world then
             if now - worldAt < WORLD_EVERY then return false end
-            pcall(function() world = Workspace:GetChildren() end)
+            pcall(function() world = GUI.WsKids(1.5) end)
             worldIdx, hiddenSeen, ragdollsSeen = 0, {}, {}
             if not world then worldAt = now; return false end
         end
@@ -7388,8 +7440,8 @@ do
     -- single hitch but shows every mine immediately, where the chunked cadence
     -- would dribble them in over ~9 seconds in workspace order (not distance
     -- order, so the nearby ones would not even come first). Upkeep is chunked.
-    function LANDMINE.scan()
-        local kids = Workspace:GetChildren()
+    function LANDMINE.scan(shared)
+        local kids = shared or GUI.WsKids(0)
         local total = #kids
         if total == 0 then return end
         if LANDMINE.NeedFull then
@@ -7592,12 +7644,16 @@ local function ESPLoop()
             -- the ESP toggle on.
             scanTimer = scanTimer + 1
             if scanTimer >= 67 then
-                if oreOn then espScan(); espCleanup() end
-                if MARCS.Enabled then marcsScan(); marcsCleanup() end
-                if GEAR.Enabled then gearScan(); gearCleanup() end
-                if RESUPPLY.Enabled or GUI.CounterVisible then resupplyScan(); resupplyCleanup() end
+                -- one Workspace list for every scan this tick (was one GetChildren per feature)
+                local wsKids = nil
+                if oreOn or MARCS.Enabled or GEAR.Enabled or RESUPPLY.Enabled or GUI.CounterVisible
+                    or LANDMINE.Enabled then wsKids = GUI.WsKids(0) end
+                if oreOn then espScan(wsKids); espCleanup() end
+                if MARCS.Enabled then marcsScan(wsKids); marcsCleanup() end
+                if GEAR.Enabled then gearScan(wsKids); gearCleanup() end
+                if RESUPPLY.Enabled or GUI.CounterVisible then resupplyScan(wsKids); resupplyCleanup() end
                 if RESUPPLY.Enabled or GUI.CounterVisible then updateResupplyCounter() end
-                if LANDMINE.Enabled then LANDMINE.scan(); LANDMINE.cleanup() end
+                if LANDMINE.Enabled then LANDMINE.scan(wsKids); LANDMINE.cleanup() end
                 if TITAN.Enabled or TITAN.SlammerESP then
                     titanScan(); titanCleanup()
                     if TITAN.SlammerESP and TITAN.SlammerTick then TITAN.SlammerTick() end
@@ -7605,7 +7661,7 @@ local function ESPLoop()
                 if ANIMAL.Enabled then animalScan(); animalCleanup() end
                 if GUI.CounterVisible then
                     pcall(function()
-                        local titans = Workspace:FindFirstChild("Titans")
+                        local titans = GUI.WsFolder("Titans")
                         GUI.TitanCount = titans and #titans:GetChildren() or 0
                     end)
                 end
@@ -9028,7 +9084,16 @@ task.spawn(function()
         -- instead of every frame. Opening the menu or a panel is picked up within 0.1 s.
         local busy = geoLive or GUI.PlayerListOpen or GUI.EnchantsOpen or GUI.RSDiffOpen
             or R.dragKey or R.resizeKey or R.scrollOff or GUI.PLSearchFocused or down
-        if busy then task.wait() else task.wait(0.1) end
+        -- v9.81: capped at ~144 passes a second. A bare task.wait() resumes ~3600 times a second
+        -- and every pass redraws, on the same Lua thread ESP, the pins and auto-parry share. The
+        -- short waits in the repeat are just clock checks; animation uses the real R.dt.
+        if busy then
+            local due = (R.frameAt or 0) + 1 / 144
+            repeat task.wait() until os.clock() >= due or not GUI.Running
+            R.frameAt = os.clock()
+        else
+            task.wait(0.1)
+        end
     end
 end)
 end)()  -- /Requiem UI smooth engine
@@ -12766,6 +12831,15 @@ end)()
             end
             saveState()
             saveCache()
+            -- v9.81: a key this whole sweep didn't find is noted, so Apply doesn't freeze again on it,
+            -- and the sweep time is kept so a half load doesn't re-sweep on every Apply either.
+            local missed = GUI._charMissed or {}
+            GUI._charMissed = missed
+            local nowM = os.clock()
+            GUI._charSweptAt = nowM
+            for k in pairs(CFG) do
+                if cache[k] and #cache[k] > 0 then missed[k] = nil else missed[k] = nowM end
+            end
             -- Loaded means the stat pins can work. Anything less stays locked, so Load Values can be
             -- pressed again: a half load used to hide the button and leave a rejoin as the only way out.
             if found > 0 and statsReady() then
@@ -12778,13 +12852,23 @@ end)()
         -- cached entries for a key; lazily sweep just that one key if the cache is still empty
         local function entriesFor(key)
             if cache[key] and #cache[key] > 0 then return cache[key] end
-            if not warmed then pcall(warm) end            -- first use this session: ONE sweep for ALL keys
+            -- first use this session: ONE sweep for ALL keys. v9.81: since v9.76 a half load leaves
+            -- `warmed` false, and every Apply then ran the whole ~15 s sweep again; now at most once a
+            -- minute from here (the Load Values button still sweeps whenever it's pressed).
+            if not warmed and os.clock() - (GUI._charSweptAt or -1e9) >= 60 then pcall(warm) end
             if cache[key] and #cache[key] > 0 then return cache[key] end
             local cfg = CFG[key]; if not cfg then return {} end
             if STAT[key] then                             -- a stat the sweep missed: no second freeze
                 if walkStats() > 0 then saveState(); saveCache() end
                 if cache[key] and #cache[key] > 0 then return cache[key] end
             end
+            -- v9.81: this used to run a 4-5 s getgc on EVERY Apply of a key that isn't in memory
+            -- (gear not worn, or gone since the sweep). Now a missed key is searched for again at
+            -- most once a minute.
+            local missed = GUI._charMissed or {}
+            GUI._charMissed = missed
+            if missed[key] and os.clock() - missed[key] < 60 then return {} end
+            missed[key] = os.clock()
             local ok, entries = pcall(function() return getgc(key) end)
             if not ok or type(entries) ~= "table" then return {} end
             local safe = {}
@@ -12794,6 +12878,7 @@ end)()
             cache[key] = safe
             scrubStats()
             safe = cache[key]
+            if #safe > 0 then missed[key] = nil end
             if safe[1] and savedDefault[key] == nil then savedDefault[key] = tonumber(safe[1].value) end
             if #safe > 0 and statsReady() then warmed = true; if _G.RequiemCharVals then _G.RequiemCharVals.warmed = true end end
             saveCache()
@@ -14805,7 +14890,11 @@ end)()
                             end
                         end
                     end
-                    task.wait()
+                    -- v9.81: was a bare task.wait() (~3600 passes a second) the whole time it's on.
+                    -- Now 30 ms naps, which still notice a minigame starting or ending at once, and
+                    -- a bare wait only when the next tap is due within 12 ms.
+                    local left = (EP.state == "pressing E") and (epInterval - (clk() - lastTap)) or 1
+                    if left > 0.012 then task.wait(math.min(0.03, left - 0.01)) else task.wait() end
                 end
                 pcall(keyrelease, VK_E)
                 if epGen == myGen then EP.state = "off" end
