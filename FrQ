@@ -35,7 +35,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v9.79"
+GUI.Version = "v9.80"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -6376,6 +6376,9 @@ end)()  -- /Music
     local BUDGET       = 0.002
     local ROSTER_EVERY = 2
     local WORLD_EVERY  = 3
+    -- NPCs that sit in Workspace with a Humanoid but aren't players: without this they read as hidden
+    -- characters and get an Actor label. Exact model names.
+    local ACTOR_IGNORE = { Requiem_Tailor = true, Requiem_Recruiter = true, Requiem_Instructor = true }
     local REREAD_EVERY = 30
     local COLOR_ACTOR  = Color3.fromRGB(40, 255, 90)
     local COLOR_STAFF  = Color3.fromRGB(255, 120, 230)
@@ -6626,7 +6629,7 @@ end)()  -- /Music
                             changed = true
                         end
                     end
-                elseif not rosterSet[nm] and not notCharacter[nm] then
+                elseif not rosterSet[nm] and not notCharacter[nm] and not ACTOR_IGNORE[nm] then
                     local hum
                     pcall(function() hum = m:FindFirstChildOfClass("Humanoid") end)
                     if hum then hiddenSeen[nm] = m else notCharacter[nm] = true end
