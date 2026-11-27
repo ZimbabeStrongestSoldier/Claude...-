@@ -35,7 +35,7 @@ local GUI = {}
 -- content header, so there is exactly one place to edit. Format vMAJOR.MINOR; minor for normal
 -- changes, major for a rework.
 -- ============================================================
-GUI.Version = "v9.81"
+GUI.Version = "v9.82"
 GUI.Elements = {}
 GUI.ContentElements = {}
 GUI.SubTabElements = {}
@@ -13878,6 +13878,14 @@ end)()
                 apply = action("Spyglass", "Spyglass", function() return applyKeys(SPY, { 200, 200 }) end),
                 restore = function() resetMany("Spyglass", SPY, "Spyglass") end,
             })
+            -- Reload Gas (v9.82, asked for back): the gas bar's click as a button. Unlike the click, it
+            -- also re-scans a bar that already shows gas, for when the reading looks stuck. Same ~10 s
+            -- freeze; before Load Values it runs Load Values (the panel is locked until then anyway).
+            -- No new local: this function is near its local limit.
+            tab:Section("Gas Bar", "Left", "Reload the gas bar's reading"):Button("Reload Gas  (~10s freeze)", function()
+                if GUI.CharIsLoading and GUI.CharIsLoading() then return end   -- a scan is already running
+                if GUI.CharReloadGas then GUI.CharReloadGas() end
+            end)
         end
         -- Presets list the sections in the order the pages show them.
         do
@@ -15185,7 +15193,7 @@ end)()
         paginate(GUI._charTab, {
             { "Movement", { "Gas Saver", "Velocity", "Grapple", "Aim Assist", "Parry", "Sprint", "Dash" }, icon = "dash" },
             { "Weapons", { "Firearm Manual", "Thunderspears", "Firearm Auto" }, icon = "swords" },
-            { "Misc", { "Swimming", "Breath", "Anxiety", "Spyglass" }, icon = "grid" },
+            { "Misc", { "Swimming", "Breath", "Anxiety", "Spyglass", "Gas Bar" }, icon = "grid" },
             { "Presets", icon = "sliders" },     -- Presets, Save Preset (the last page takes the rest)
         })
         paginate(GUI._setTab, {
